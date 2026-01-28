@@ -1,0 +1,163 @@
+----------------------------------------------------------------------------------------------------------
+1. Crear una carpeta de proyecto, por ejemplo:
+- cd C:\Users\luisp\CodeWindows\kafka
+----------------------------------------------------------------------------------------------------------
+2. Crear un docker-compose.yml que tenga todo en uno (PostgreSQL, Debezium, Kafka Connect, Kafka UI, Kafka, Zookepper)
+- echo "" > docker-compose.yml
+- notepad docker-compose.yml
+----------------------------------------------------------------------------------------------------------
+3. Llenar el yaml
+
+version: '3.8'
+
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: zookeeper
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - kafka-net
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,PLAINTEXT_INTERNAL://0.0.0.0:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,PLAINTEXT_INTERNAL://kafka:29092
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT_INTERNAL
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    networks:
+      - kafka-net
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    depends_on:
+      - kafka
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+    networks:
+      - kafka-net
+
+  postgres:
+    image: debezium/postgres:15
+    container_name: postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: demo
+    networks:
+      - kafka-net
+
+  kafka-connect:
+    image: debezium/connect:2.5
+    container_name: kafka-connect
+    depends_on:
+      - kafka
+      - postgres
+    ports:
+      - "8083:8083"
+    environment:
+      BOOTSTRAP_SERVERS: kafka:29092
+      GROUP_ID: 1
+      CONFIG_STORAGE_TOPIC: debezium-configs
+      OFFSET_STORAGE_TOPIC: debezium-offsets
+      STATUS_STORAGE_TOPIC: debezium-status
+      KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
+      KEY_CONVERTER_SCHEMAS_ENABLE: "false"
+    networks:
+      - kafka-net
+
+networks:
+  kafka-net:
+    driver: bridge
+
+- Levantar/Bajar containers basado en yaml
+
+docker-compose up -d
+docker-compose down -v
+----------------------------------------------------------------------------------------------------------
+4. Crear tabla en PostgreSQL
+- Crear en BD "demo"
+- Los INSERT, UPDATE, DELETE deberían desencadenar evento en Python
+
+CREATE TABLE clientes (
+  id INT PRIMARY KEY,
+  nombre TEXT,
+  email TEXT
+);
+
+INSERT INTO clientes
+SELECT 2, 'Juan', 'prueba2@gmail.com'
+----------------------------------------------------------------------------------------------------------
+5. Agregar configuración al Kafka Connect (En Powershell)
+
+Invoke-WebRequest -Uri "http://localhost:8083/connectors" `
+  -Method POST `
+  -Headers @{ "Content-Type" = "application/json" } `
+  -Body '{
+    "name": "pg-clientes-connector",
+    "config": {
+      "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+      "database.hostname": "postgres",
+      "database.port": "5432",
+      "database.user": "postgres",
+      "database.password": "postgres",
+      "database.dbname": "demo",
+      "topic.prefix": "pgdemo",
+      "table.include.list": "public.clientes",
+      "plugin.name": "pgoutput"
+    }
+  }'
+
+- Revisar que se haya creado bien
+
+Invoke-WebRequest -Uri "http://localhost:8083/connectors/pg-clientes-connector/status" -Method GET
+----------------------------------------------------------------------------------------------------------
+6. Probar
+- En Python podríamos probar el siguiente código como consumidor, para escuchar cualquier nuevo mensaje de Kafka
+- Kafka UI se abre en el navegador con http://localhost:8080 (se debe crear un topic y luego se pueden enviar mensajes)
+- Al aplicar configuración deberías tener el topic creado de debezium, de clientes
+- Hay 2 puertos y 2 listener en el yaml, esto es porque uso Python desde WSL y Docker desde Windows
+
+import json
+from confluent_kafka import Consumer
+
+c = Consumer({
+    'bootstrap.servers': 'localhost:9092',
+    'group.id': 'cdc-python',
+    'auto.offset.reset': 'earliest'
+})
+
+c.subscribe(['pgdemo.public.clientes'])
+
+print("📥 Escuchando solo los datos de la tabla...")
+
+while True:
+    msg = c.poll(1.0)
+    if msg and not msg.error():
+        data = json.loads(msg.value().decode('utf-8'))
+        after = data.get("payload", {}).get("after", None)
+        if after:
+            print(f"id={after['id']}, nombre={after['nombre']}, email={after['email']}")
+----------------------------------------------------------------------------------------------------------
