@@ -1,0 +1,38 @@
+--------------------------------------------------------
+Definir git config (perfil Windows)
+--------------------------------------------------------
+git config --global user.name "Kriathos"
+git config --global user.email "luispicado26@gmail.com"
+
+** Clonar Repo **
+git clone https://github.com/Kriathos/testing-kafka.git
+
+--------------------------------------------------------
+Inicializar Git en tu carpeta local
+--------------------------------------------------------
+cd C:\Users\luisp\CodeWindows\kafka
+git init
+
+--------------------------------------------------------
+Conectar tu carpeta con el repo de GitHub
+--------------------------------------------------------
+git remote add origin https://github.com/TuUsuario/kafka-project.git
+
+--------------------------------------------------------
+Agregar y hacer commit de tus archivos
+--------------------------------------------------------
+git add .
+git commit -m "Primer commit: proyecto Kafka"
+
+--------------------------------------------------------
+Subir los archivos a GitHub
+--------------------------------------------------------
+git branch -M main
+git push -u origin main
+
+--------------------------------------------------------
+Subir cambios
+--------------------------------------------------------
+git add .
+git commit -m "Descripción de cambios"
+git push
