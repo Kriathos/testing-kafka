@@ -1,0 +1,6 @@
+# Ignorar carpetas
+old/
+
+# Ignorar archivos especificos
+docker-compose.yml
+Git.txt
